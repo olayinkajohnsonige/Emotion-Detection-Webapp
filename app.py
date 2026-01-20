@@ -6,6 +6,12 @@ import os
 import sqlite3
 import uuid
 
+# --- Memory Optimization for Render ---
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+physical_devices = tf.config.list_physical_devices('GPU')
+if physical_devices:
+    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
 app = Flask(__name__)
 
 # --- Configuration ---
@@ -14,12 +20,11 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 DATABASE = 'emotions.db'
 LABELS = ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral']
 
+# Global variable for model (starts empty)
+MODEL = None
+
 # Load the face detector 
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-
-# --- Load the NEW Model (Optimized for Render Memory) ---
-# compile=False saves a huge amount of RAM on startup
-MODEL = tf.keras.models.load_model("emotion_model_v2.h5", compile=False)
 
 def get_db_connection():
     conn = sqlite3.connect(DATABASE)
@@ -39,13 +44,19 @@ with get_db_connection() as conn:
 def home():
     return render_template('index.html')
 
-# FIXED: Added 'GET' method so you don't get the "Method Not Allowed" error on refresh
 @app.route('/predict', methods=['GET', 'POST'])
 def predict():
+    global MODEL # Use the global variable
+    
     if request.method == 'GET':
         return redirect(url_for('home'))
 
     try:
+        # --- LAZY LOADING ---
+        # Only load the model if it hasn't been loaded yet
+        if MODEL is None:
+            MODEL = tf.keras.models.load_model("emotion_model_v2.h5", compile=False)
+
         name = request.form['name']
         image_file = request.files['image']
 
@@ -61,8 +72,6 @@ def predict():
             return "Invalid image file", 400
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # Detect face
         faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
         if len(faces) > 0:
@@ -93,5 +102,4 @@ def predict():
         return f"Error: {str(e)}"
 
 if __name__ == '__main__':
-    # Use port 5000 for local testing; Render will override this automatically
     app.run(debug=True, port=5000)
